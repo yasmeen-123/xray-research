@@ -4,43 +4,50 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
 
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     const { width, height } = canvas;
-    let breaches: any[] = [];
-
-    // Doctor's Logic: Search for specific "breaks" in the high-density Cortex
-    for (let y = 50; y < height - 50; y += 5) {
-        for (let x = 50; x < width - 50; x += 5) {
+    let candidates: any[] = [];
+    
+    // Only scan the bone-containing regions (middle 70%)
+    for (let y = Math.floor(height * 0.15); y < height * 0.85; y += 6) {
+        for (let x = Math.floor(width * 0.15); x < width * 0.85; x += 6) {
             const i = (y * width + x) * 4;
-            const current = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+            const bright = (pixels[i] + pixels[i+1] + pixels[i+2]) / 3;
 
-            // Only look at the Cortex (Bright White)
-            if (current > 200) {
-                const ahead = (y * width + (x + 10)) * 4;
-                const bAhead = (pixels[ahead] + pixels[ahead + 1] + pixels[ahead + 2]) / 3;
+            // Strict Cortex filter: ignores grey tissue/shadows
+            if (bright > 225) { 
+                const ahead = (y * width + (x + 15)) * 4;
+                if (ahead < pixels.length) {
+                    const bAhead = (pixels[ahead] + pixels[ahead+1] + pixels[ahead+2]) / 3;
+                    const gap = bright - bAhead;
 
-                // Breach = sudden deep drop in brightness
-                const gap = current - bAhead;
-
-                // Threshold raised to 130 to avoid false positives from shadows
-                if (gap > 130) {
-                    breaches.push({ x, y, score: gap });
+                    if (gap > 170) { // Very deep breach detection
+                        candidates.push({ x, y, score: gap });
+                    }
                 }
             }
         }
     }
 
-    if (breaches.length > 0) {
-        breaches.sort((a, b) => b.score - a.score);
-        const top = breaches[0];
+    if (candidates.length > 0) {
+        candidates.sort((a, b) => b.score - a.score);
+        const top = candidates[0];
 
-        // Draw visual marker only on extremely high-confidence breaches
-        ctx.strokeStyle = "red";
-        ctx.lineWidth = 5;
+        // Draw HUD Crosshair
+        ctx.strokeStyle = "#eb445a";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([2, 2]);
         ctx.beginPath();
-        ctx.arc(top.x, top.y, 30, 0, 2 * Math.PI);
+        ctx.arc(top.x, top.y, 25, 0, 2 * Math.PI);
+        ctx.stroke();
+        
+        // Horizontal and Vertical Crosshair lines
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(top.x - 35, top.y); ctx.lineTo(top.x + 35, top.y);
+        ctx.moveTo(top.x, top.y - 35); ctx.lineTo(top.x, top.y + 35);
         ctx.stroke();
 
-        return { status: "CRITICAL", message: "Structural breach detected in the cortical line." };
+        return { status: "CRITICAL", x: top.x, y: top.y };
     }
 
-    return { status: "STABLE", message: "No significant cortical breach found." };
+    return { status: "STABLE" };
 };
