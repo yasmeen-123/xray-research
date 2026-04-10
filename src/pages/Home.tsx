@@ -1,4 +1,39 @@
-export const processXraySignal = (canvas: HTMLCanvasElement) => {
+import * as tmImage from '@teachablemachine/image';
+import { useState } from 'react';
+
+// 1. SET YOUR AI URL
+const MODEL_URL = "https://teachablemachine.withgoogle.com/models/[...]";
+
+interface Stats {
+  status: string;
+  confidence: string;
+  message: string;
+}
+
+export default function Home() {
+  const [stats, setStats] = useState<Stats | null>(null);
+
+  const runAIPrediction = async (imageElement: HTMLImageElement) => {
+    // 2. LOAD THE MODEL
+    const model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+    
+    // 3. GET PREDICTION
+    const predictions = await model.predict(imageElement);
+    
+    // 4. FIND THE HIGHEST PROBABILITY
+    // Predictions look like: [{className: "Fracture", probability: 0.98}, {className: "Healthy", probability: 0.02}]
+    predictions.sort((a, b) => b.probability - a.probability);
+    const topResult = predictions[0];
+
+    // 5. UPDATE UI BASED ON AI VERDICT
+    return {
+        verdict: topResult.className,
+        confidence: (topResult.probability * 100).toFixed(1) + "%",
+        isSafe: topResult.className === "Healthy"
+  };
+};
+
+const processXraySignal = (canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
@@ -59,12 +94,12 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
         status,
         message: verdict,
         confidence: confidence.toFixed(1) + "%",
-        coord: defectX > 0 ? `${defectX}, ${defectY}` : "None"
-    };
+      coord: defectX > 0 ? `${defectX}, ${defectY}` : "None"
+  };
 };
 
 // Helper function for the "AI Kernel"
-function calculateStress(pixels: Uint8ClampedArray, x: number, y: number, width: number, kernel: number[][]) {
+const calculateStress = (pixels: Uint8ClampedArray, x: number, y: number, width: number, kernel: number[][]) => {
     let sum = 0;
     for (let ky = -1; ky <= 1; ky++) {
         for (let kx = -1; kx <= 1; kx++) {
@@ -74,4 +109,34 @@ function calculateStress(pixels: Uint8ClampedArray, x: number, y: number, width:
         }
     }
     return Math.abs(sum);
+  };
+
+  return (
+    <>
+      {stats && (
+        <div className="report-container">
+          <h2 style={{ color: '#000', fontWeight: '900' }}>DIAGNOSTIC REPORT</h2>
+          
+          <div style={{ padding: '15px', background: '#f8fafc', borderRadius: '12px' }}>
+            <p><b>Finding:</b> {stats.status}</p>
+            <p><b>AI Confidence:</b> {stats.confidence}</p>
+            
+            {/* Confidence Visual Bar */}
+            <div style={{ width: '100%', height: '10px', background: '#ddd', borderRadius: '5px' }}>
+              <div style={{ 
+                width: stats.confidence, 
+                height: '100%', 
+                background: stats.status === 'FRACTURED' ? 'red' : 'green',
+                borderRadius: '5px' 
+              }} />
+            </div>
+          </div>
+
+          <div className={`verdict-box ${stats.status === 'FRACTURED' ? 'danger' : 'safe'}`}>
+            <p>{stats.message}</p>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
