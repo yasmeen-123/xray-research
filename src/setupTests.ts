@@ -4,6 +4,14 @@
 // learn more: https://github.com/testing-library/jest-dom
 import '@testing-library/jest-dom/extend-expect';
 
+// Ionic's Stencil runtime expects adoptedStyleSheets support in test DOM.
+if (!('adoptedStyleSheets' in document)) {
+  Object.defineProperty(document, 'adoptedStyleSheets', {
+    value: [],
+    writable: true,
+  });
+}
+
 // Mock matchmedia
 window.matchMedia = window.matchMedia || function() {
   return {

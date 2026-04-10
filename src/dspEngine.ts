@@ -68,7 +68,7 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
 
     // Draw Visual AI Target
     if (topMatch && status !== "HEALTHY") {
-        ctx.strokeStyle = status === "CRITICAL" ? "#ff0000" : "#ffa500";
+        ctx.strokeStyle = status === "CRITICAL" ? "#ff0000" : "#2ff507";
         ctx.lineWidth = 4;
         ctx.setLineDash([5, 5]);
         ctx.beginPath();
