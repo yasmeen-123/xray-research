@@ -2,51 +2,77 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
     const { width, height } = canvas;
-    let candidates: any[] = [];
     
-    // Only scan the bone-containing regions (middle 70%)
-    for (let y = Math.floor(height * 0.15); y < height * 0.85; y += 6) {
-        for (let x = Math.floor(width * 0.15); x < width * 0.85; x += 6) {
+    let anomalies: any[] = [];
+
+    // Scanning central ROI (Region of Interest)
+    for (let y = Math.floor(height * 0.15); y < height * 0.85; y += 4) {
+        for (let x = Math.floor(width * 0.15); x < width * 0.85; x += 4) {
             const i = (y * width + x) * 4;
-            const bright = (pixels[i] + pixels[i+1] + pixels[i+2]) / 3;
+            const gray = 0.299 * pixels[i] + 0.587 * pixels[i+1] + 0.114 * pixels[i+2];
 
-            // Strict Cortex filter: ignores grey tissue/shadows
-            if (bright > 225) { 
-                const ahead = (y * width + (x + 15)) * 4;
+            if (gray > 190) {
+                const ahead = (y * width + (x + 12)) * 4;
                 if (ahead < pixels.length) {
-                    const bAhead = (pixels[ahead] + pixels[ahead+1] + pixels[ahead+2]) / 3;
-                    const gap = bright - bAhead;
+                    const grayAhead = (pixels[ahead] + pixels[ahead+1] + pixels[ahead+2]) / 3;
+                    const densityDrop = gray - grayAhead;
 
-                    if (gap > 170) { // Very deep breach detection
-                        candidates.push({ x, y, score: gap });
+                    if (densityDrop > 135) { 
+                        anomalies.push({ x: x + 6, y, score: densityDrop });
                     }
                 }
             }
         }
     }
 
-    if (candidates.length > 0) {
-        candidates.sort((a, b) => b.score - a.score);
-        const top = candidates[0];
+    if (anomalies.length > 0) {
+        anomalies.sort((a, b) => b.score - a.score);
+        const top = anomalies[0];
 
-        // Draw HUD Crosshair
-        ctx.strokeStyle = "#eb445a";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([2, 2]);
-        ctx.beginPath();
-        ctx.arc(top.x, top.y, 25, 0, 2 * Math.PI);
-        ctx.stroke();
+        // --- ULTRA-HIGH VISIBILITY HIGHLIGHTING ---
+        ctx.save();
         
-        // Horizontal and Vertical Crosshair lines
-        ctx.setLineDash([]);
+        // 1. Create a "Contrast Drop Shadow" (Makes the red visible on white bone)
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = "transparent";
+        ctx.strokeStyle = "black"; 
+        ctx.lineWidth = 10; // Extra thick black backing
         ctx.beginPath();
-        ctx.moveTo(top.x - 35, top.y); ctx.lineTo(top.x + 35, top.y);
-        ctx.moveTo(top.x, top.y - 35); ctx.lineTo(top.x, top.y + 35);
+        ctx.arc(top.x, top.y, 40, 0, 2 * Math.PI);
         ctx.stroke();
 
-        return { status: "CRITICAL", x: top.x, y: top.y };
+        // 2. Neon Red Layer (The actual marker)
+        ctx.shadowBlur = 25; // Massive Glow
+        ctx.shadowColor = "#ff0000"; 
+        ctx.strokeStyle = "#ff0000"; // Pure Bright Red
+        ctx.lineWidth = 5; // Bold line
+        ctx.beginPath();
+        ctx.arc(top.x, top.y, 40, 0, 2 * Math.PI);
+        ctx.stroke();
+
+        // 3. Precision Crosshair (White center for maximum "Point" visibility)
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        // Vertical line
+        ctx.moveTo(top.x, top.y - 60); ctx.lineTo(top.x, top.y + 60);
+        // Horizontal line
+        ctx.moveTo(top.x - 60, top.y); ctx.lineTo(top.x + 60, top.y);
+        ctx.stroke();
+
+        ctx.restore();
+
+        return { 
+            status: "CRITICAL", 
+            x: top.x, 
+            y: top.y, 
+            score: top.score 
+        };
     }
 
     return { status: "STABLE" };
