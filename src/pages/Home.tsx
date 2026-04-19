@@ -1,141 +1,224 @@
 import * as tmImage from '@teachablemachine/image';
 import { useState, useRef } from 'react';
-import { 
-  IonContent, IonHeader, IonPage, IonTitle, IonToolbar, 
-  IonButton, IonIcon, IonSpinner, IonBadge, IonGrid, IonRow, IonCol
+import {
+  IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
+  IonButton, IonSpinner, IonBadge
 } from '@ionic/react';
-import { scanOutline, medicalOutline, analyticsOutline, fitnessOutline } from 'ionicons/icons';
 import { processXraySignal } from '../dspEngine';
 
 const MODEL_URL = "https://teachablemachine.withgoogle.com/models/82gnJxwjs/";
 
-const THEME = {
-    bg: '#040609',
-    card: '#0c111d',
-    accent: '#3880ff',
-    border: '#1e2533'
+type AnalysisReport = {
+  status: string;
+  confidence: string;
+  isCritical: boolean;
+  analysis: {
+    edges: string;
+    density: string;
+    alignment: string;
+  };
+  findings: string[];
+  impression: string;
 };
 
 export default function Home() {
-  const [report, setReport] = useState<any>(null);
+  const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const runAdvancedDiagnostic = async (img: HTMLImageElement) => {
     setLoading(true);
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
 
-    // STEP 2: PREPROCESSING (Normalization & Resizing)
-    canvas.width = img.width;
-    canvas.height = img.height;
-    ctx.filter = "grayscale(100%) contrast(120%)"; // Medical normalization
-    ctx.drawImage(img, 0, 0);
-    ctx.filter = "none"; // Reset for DSP pass
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      setLoading(false);
+      return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      setLoading(false);
+      return;
+    }
+
+    const SIZE = 224;
+    canvas.width = SIZE;
+    canvas.height = SIZE;
+
+    ctx.drawImage(img, 0, 0, SIZE, SIZE);
 
     try {
-      const model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+      const model = await tmImage.load(
+        MODEL_URL + "model.json",
+        MODEL_URL + "metadata.json"
+      );
+
       const predictions = await model.predict(canvas);
       predictions.sort((a: any, b: any) => b.probability - a.probability);
-      
-      // STEP 3: FEATURE EXTRACTION (Digital Signal Processing)
+
       const dsp = processXraySignal(canvas);
 
-      // HYBRID VALIDATION LOGIC
-      const isFracture = predictions[0].className === "Fractured" && 
-                         predictions[0].probability > 0.94 && 
-                         dsp?.status === "CRITICAL";
+      const prob = predictions[0]?.probability || 0;
+
+      const isFracture =
+        predictions[0]?.className === "Fractured" &&
+        prob > 0.85 &&
+        dsp?.status === "CRITICAL";
 
       setReport({
-        status: isFracture ? "ACUTE DISCONTINUITY DETECTED" : "UNREMARKABLE STUDY",
-        confidence: (predictions[0].probability * 100).toFixed(1) + "%",
+        status: isFracture ? "FRACTURE DETECTED" : "NORMAL",
+        confidence: (prob * 100).toFixed(1) + "%",
         isCritical: isFracture,
         analysis: {
-            edges: isFracture ? "Cortex breach identified" : "Normal cortical edge",
-            density: isFracture ? "Abnormal lucency shadow" : "Uniform osseous density",
-            alignment: isFracture ? "Potential metaphyseal shift" : "Alignment preserved"
+          edges: isFracture ? "Cortical edge discontinuity detected" : "Cortical edges intact",
+          density: isFracture ? "Localized abnormal lucency" : "Uniform bone density",
+          alignment: isFracture ? "Possible misalignment" : "Normal alignment"
         },
-        findings: isFracture 
-            ? ["Clear bone discontinuity detected.", "Abnormal shadow (lucency) in metaphyseal region.", "Misalignment of cortical shell."]
-            : ["No osseous breach detected.", "No abnormal shadows identified.", "Bone density is within normal anatomical limits."],
-        impression: isFracture 
-            ? "Radiographic evidence consistent with acute fracture. Urgent clinical correlation required."
-            : "No radiographic evidence of acute fracture."
+        findings: isFracture
+          ? [
+              "Visible cortical breach detected.",
+              "Abnormal radiolucent region present.",
+              "Bone structure shows discontinuity."
+            ]
+          : [
+              "No cortical disruption observed.",
+              "Bone density appears normal.",
+              "No abnormal radiolucency detected."
+            ],
+        impression: isFracture
+          ? "Radiographic findings are consistent with fracture. Clinical evaluation recommended."
+          : "No radiographic evidence of fracture."
       });
-    } catch (e) { console.error(e); }
+
+    } catch (err) {
+      console.error(err);
+      setReport({
+        status: "ANALYSIS FAILED",
+        confidence: "0.0%",
+        isCritical: false,
+        analysis: {
+          edges: "Unable to analyze",
+          density: "Unable to analyze",
+          alignment: "Unable to analyze"
+        },
+        findings: ["Model or image analysis failed. Please try another image."],
+        impression: "No diagnostic impression available due to analysis error."
+      });
+    }
+
     setLoading(false);
   };
 
   return (
     <IonPage>
-      <IonHeader className="ion-no-border">
-        <IonToolbar style={{ '--background': THEME.bg, borderBottom: `1px solid ${THEME.border}` }}>
-          <IonTitle style={{ color: '#fff', fontSize: '0.8rem', letterSpacing: '2px', fontWeight: 'bold' }}>
-            RADIOLOGY AI <span style={{ color: THEME.accent }}>DASHBOARD</span>
+      <IonHeader>
+        <IonToolbar style={{ background: "#0b0f1a" }}>
+          <IonTitle style={{ color: "#fff" }}>
+            XRAY AI ANALYSIS SYSTEM
           </IonTitle>
         </IonToolbar>
       </IonHeader>
-      
-      <IonContent scrollY={false} style={{ '--background': THEME.bg }}>
-        <div style={{ display: 'flex', flexDirection: 'row', height: '100vh', overflow: 'hidden' }}>
-          
-          {/* LEFT: VIEWPORT */}
-          <div style={{ flex: '1.3', background: '#000', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative', borderRight: `1px solid ${THEME.border}` }}>
-            <canvas ref={canvasRef} style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain' }} />
-            <div style={{ position: 'absolute', top: '20px', left: '20px', color: THEME.accent, fontSize: '0.6rem' }}>
-                [ SYSTEM STATUS: {loading ? 'SCANNING...' : 'READY'} ]
-            </div>
-          </div>
 
-          {/* RIGHT: DOCTOR ANALYSIS CONSOLE */}
-          <div style={{ flex: '0.7', background: THEME.card, padding: '20px', display: 'flex', flexDirection: 'column' }}>
-            <IonButton expand="block" mode="ios" color="primary" onClick={() => document.getElementById('x-up')?.click()} disabled={loading}>
-              {loading ? <IonSpinner name="dots" /> : "UPLOAD & ANALYZE X-RAY"}
+      <IonContent style={{ "--background": "#0b0f1a" }}>
+        <div style={{
+          display: "flex",
+          height: "100%",
+          overflow: "hidden"
+        }}>
+
+          {/* LEFT SIDE */}
+          <div style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRight: "1px solid #222"
+          }}>
+            <canvas
+              ref={canvasRef}
+              style={{
+                width: "80%",
+                height: "auto",
+                border: "1px solid #333",
+                background: "#000"
+              }}
+            />
+
+            <IonButton
+              style={{ marginTop: "20px" }}
+              onClick={() => document.getElementById('upload')?.click()}
+              disabled={loading}
+            >
+              {loading ? <IonSpinner /> : "Upload X-ray"}
             </IonButton>
-            <input type="file" id="x-up" hidden accept="image/*" onChange={(e:any) => {
-              const reader = new FileReader();
-              reader.onload = (ev:any) => {
-                const img = new Image();
-                img.onload = () => runAdvancedDiagnostic(img);
-                img.src = ev.target.result;
-              };
-              reader.readAsDataURL(e.target.files[0]);
-            }} />
 
-            <div style={{ flex: '1', marginTop: '20px', background: THEME.bg, borderRadius: '10px', padding: '15px', border: `1px solid ${THEME.border}`, overflowY: 'auto' }}>
-              {report ? (
-                <>
-                  <IonBadge color={report.isCritical ? 'danger' : 'success'} style={{ marginBottom: '15px' }}>{report.status}</IonBadge>
-                  
-                  {/* STEP 3 REPLICATED: Detailed Feature Table */}
-                  <div style={{ marginBottom: '20px' }}>
-                    <h6 style={{ color: '#444', fontSize: '0.6rem', letterSpacing: '1px' }}>FEATURE EXTRACTION</h6>
-                    <table style={{ width: '100%', color: '#fff', fontSize: '0.7rem' }}>
-                        <tr><td style={{ color: '#666' }}>Edges:</td><td>{report.analysis.edges}</td></tr>
-                        <tr><td style={{ color: '#666' }}>Density:</td><td>{report.analysis.density}</td></tr>
-                        <tr><td style={{ color: '#666' }}>Alignment:</td><td>{report.analysis.alignment}</td></tr>
-                    </table>
-                  </div>
-
-                  <h6 style={{ color: THEME.accent, fontSize: '0.7rem' }}>CLINICAL FINDINGS:</h6>
-                  <ul style={{ color: '#999', fontSize: '0.75rem', paddingLeft: '15px' }}>
-                    {report.findings.map((f:any, i:number) => <li key={i}>{f}</li>)}
-                  </ul>
-
-                  <div style={{ background: '#1a1e2b', padding: '12px', borderRadius: '5px', borderLeft: `4px solid ${report.isCritical ? 'red' : 'green'}`, marginTop: '10px' }}>
-                    <p style={{ color: '#fff', margin: 0, fontSize: '0.8rem' }}><strong>IMPRESSION:</strong> {report.impression}</p>
-                  </div>
-                </>
-              ) : (
-                <div style={{ textAlign: 'center', color: '#333', marginTop: '50%' }}>
-                    <IonIcon icon={fitnessOutline} style={{ fontSize: '2rem' }} /><br/>
-                    AWAITING SOURCE IMAGERY
-                </div>
-              )}
-            </div>
+            <input
+              id="upload"
+              type="file"
+              hidden
+              accept="image/*"
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                const file = e.target.files?.[0];
+                if (!file) {
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = (ev: ProgressEvent<FileReader>) => {
+                  const result = ev.target?.result;
+                  if (typeof result !== 'string') {
+                    return;
+                  }
+                  const img = new Image();
+                  img.onload = () => runAdvancedDiagnostic(img);
+                  img.src = result;
+                };
+                reader.readAsDataURL(file);
+              }}
+            />
           </div>
+
+          {/* RIGHT SIDE */}
+          <div style={{
+            flex: 1,
+            padding: "20px",
+            color: "#fff",
+            overflowY: "auto"
+          }}>
+            {report ? (
+  <>
+    <IonBadge color={report.isCritical ? "danger" : "success"}>
+      {report.status}
+    </IonBadge>
+
+    <p><strong>Confidence:</strong> {report.confidence}</p>
+
+    <h3 style={{ marginTop: "20px" }}>Feature Analysis</h3>
+    <p><strong>Edges:</strong> {report.analysis.edges}</p>
+    <p><strong>Density:</strong> {report.analysis.density}</p>
+    <p><strong>Alignment:</strong> {report.analysis.alignment}</p>
+
+    <h3 style={{ marginTop: "20px" }}>Clinical Findings</h3>
+    <ul>
+      {report.findings.map((f: string, i: number) => (
+        <li key={i}>{f}</li>
+      ))}
+    </ul>
+
+    <h3 style={{ marginTop: "20px" }}>Impression</h3>
+    <div style={{
+      background: "#1c2230",
+      padding: "12px",
+      borderLeft: `4px solid ${report.isCritical ? "red" : "green"}`
+    }}>
+      {report.impression}
+    </div>
+  </>
+) : (
+  <p>Upload an X-ray to begin analysis.</p>
+)}
+          </div>
+
         </div>
       </IonContent>
     </IonPage>

@@ -2,78 +2,107 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const pixels = imageData.data;
     const { width, height } = canvas;
-    
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const pixels = imageData.data;
+
+    // ---- STEP 1: Convert to grayscale array ----
+    const gray: number[] = [];
+    for (let i = 0; i < pixels.length; i += 4) {
+        gray.push(0.299 * pixels[i] + 0.587 * pixels[i+1] + 0.114 * pixels[i+2]);
+    }
+
+    // ---- STEP 2: Sobel Edge Detection ----
+    const edges: number[] = new Array(width * height).fill(0);
+
+    const gx = [-1,0,1,-2,0,2,-1,0,1];
+    const gy = [-1,-2,-1,0,0,0,1,2,1];
+
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            let sumX = 0, sumY = 0;
+            let k = 0;
+
+            for (let ky = -1; ky <= 1; ky++) {
+                for (let kx = -1; kx <= 1; kx++) {
+                    const pixel = gray[(y + ky) * width + (x + kx)];
+                    sumX += pixel * gx[k];
+                    sumY += pixel * gy[k];
+                    k++;
+                }
+            }
+
+            edges[y * width + x] = Math.sqrt(sumX * sumX + sumY * sumY);
+        }
+    }
+
+    // ---- STEP 3: Dynamic Threshold ----
+    const avgEdge = edges.reduce((a, b) => a + b, 0) / edges.length;
+    const threshold = avgEdge * 1.5; // adaptive
+
     let anomalies: any[] = [];
 
-    // Scanning central ROI (Region of Interest)
-    for (let y = Math.floor(height * 0.15); y < height * 0.85; y += 4) {
-        for (let x = Math.floor(width * 0.15); x < width * 0.85; x += 4) {
-            const i = (y * width + x) * 4;
-            const gray = 0.299 * pixels[i] + 0.587 * pixels[i+1] + 0.114 * pixels[i+2];
+    // ---- STEP 4: Cortex-focused scanning ----
+    const margin = Math.floor(width * 0.1);
 
-            if (gray > 190) {
-                const ahead = (y * width + (x + 12)) * 4;
-                if (ahead < pixels.length) {
-                    const grayAhead = (pixels[ahead] + pixels[ahead+1] + pixels[ahead+2]) / 3;
-                    const densityDrop = gray - grayAhead;
+    for (let y = margin; y < height - margin; y += 2) {
+        for (let x = margin; x < width - margin; x += 2) {
 
-                    if (densityDrop > 135) { 
-                        anomalies.push({ x: x + 6, y, score: densityDrop });
-                    }
+            const idx = y * width + x;
+
+            // Strong edge but suddenly weak nearby → discontinuity
+            if (edges[idx] > threshold) {
+                const neighbor = edges[idx + 5] || 0;
+                const drop = edges[idx] - neighbor;
+
+                if (drop > threshold * 0.8) {
+                    anomalies.push({ x, y, score: drop });
                 }
             }
         }
     }
 
+    // ---- STEP 5: Highlight ----
     if (anomalies.length > 0) {
         anomalies.sort((a, b) => b.score - a.score);
         const top = anomalies[0];
 
-        // --- ULTRA-HIGH VISIBILITY HIGHLIGHTING ---
         ctx.save();
-        
-        // 1. Create a "Contrast Drop Shadow" (Makes the red visible on white bone)
-        ctx.shadowBlur = 0;
-        ctx.shadowColor = "transparent";
-        ctx.strokeStyle = "black"; 
-        ctx.lineWidth = 10; // Extra thick black backing
+
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 10;
         ctx.beginPath();
         ctx.arc(top.x, top.y, 40, 0, 2 * Math.PI);
         ctx.stroke();
 
-        // 2. Neon Red Layer (The actual marker)
-        ctx.shadowBlur = 25; // Massive Glow
-        ctx.shadowColor = "#ff0000"; 
-        ctx.strokeStyle = "#ff0000"; // Pure Bright Red
-        ctx.lineWidth = 5; // Bold line
+        ctx.shadowBlur = 25;
+        ctx.shadowColor = "#ff0000";
+        ctx.strokeStyle = "#ff0000";
+        ctx.lineWidth = 5;
         ctx.beginPath();
         ctx.arc(top.x, top.y, 40, 0, 2 * Math.PI);
         ctx.stroke();
 
-        // 3. Precision Crosshair (White center for maximum "Point" visibility)
-        ctx.setLineDash([]);
         ctx.shadowBlur = 0;
         ctx.strokeStyle = "white";
         ctx.lineWidth = 2;
         ctx.beginPath();
-        // Vertical line
-        ctx.moveTo(top.x, top.y - 60); ctx.lineTo(top.x, top.y + 60);
-        // Horizontal line
-        ctx.moveTo(top.x - 60, top.y); ctx.lineTo(top.x + 60, top.y);
+        ctx.moveTo(top.x, top.y - 60);
+        ctx.lineTo(top.x, top.y + 60);
+        ctx.moveTo(top.x - 60, top.y);
+        ctx.lineTo(top.x + 60, top.y);
         ctx.stroke();
 
         ctx.restore();
 
-        return { 
-            status: "CRITICAL", 
-            x: top.x, 
-            y: top.y, 
-            score: top.score 
+        return {
+            status: "CRITICAL",
+            x: top.x,
+            y: top.y,
+            score: top.score,
+            threshold
         };
     }
 
-    return { status: "STABLE" };
+    return { status: "STABLE", threshold };
 };
