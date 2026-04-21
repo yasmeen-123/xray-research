@@ -6,13 +6,39 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
     const imageData = ctx.getImageData(0, 0, width, height);
     const pixels = imageData.data;
 
-    // ---- STEP 1: Convert to grayscale array ----
+    // -----------------------------
+    // STEP 1: GRAYSCALE
+    // -----------------------------
     const gray: number[] = [];
     for (let i = 0; i < pixels.length; i += 4) {
-        gray.push(0.299 * pixels[i] + 0.587 * pixels[i+1] + 0.114 * pixels[i+2]);
+        gray.push(0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]);
     }
 
-    // ---- STEP 2: Sobel Edge Detection ----
+    // -----------------------------
+    // STEP 2: GAUSSIAN SMOOTH (reduce noise)
+    // -----------------------------
+    const smooth: number[] = new Array(width * height).fill(0);
+    const kernel = [1, 2, 1, 2, 4, 2, 1, 2, 1];
+
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            let sum = 0;
+            let k = 0;
+
+            for (let ky = -1; ky <= 1; ky++) {
+                for (let kx = -1; kx <= 1; kx++) {
+                    sum += gray[(y + ky) * width + (x + kx)] * kernel[k];
+                    k++;
+                }
+            }
+
+            smooth[y * width + x] = sum / 16;
+        }
+    }
+
+    // -----------------------------
+    // STEP 3: SOBEL EDGES
+    // -----------------------------
     const edges: number[] = new Array(width * height).fill(0);
 
     const gx = [-1,0,1,-2,0,2,-1,0,1];
@@ -25,7 +51,7 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
 
             for (let ky = -1; ky <= 1; ky++) {
                 for (let kx = -1; kx <= 1; kx++) {
-                    const pixel = gray[(y + ky) * width + (x + kx)];
+                    const pixel = smooth[(y + ky) * width + (x + kx)];
                     sumX += pixel * gx[k];
                     sumY += pixel * gy[k];
                     k++;
@@ -36,73 +62,93 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
         }
     }
 
-    // ---- STEP 3: Dynamic Threshold ----
+    // -----------------------------
+    // STEP 4: THRESHOLD
+    // -----------------------------
     const avgEdge = edges.reduce((a, b) => a + b, 0) / edges.length;
-    const threshold = avgEdge * 1.5; // adaptive
+    const strongEdge = avgEdge * 1.8;
 
-    let anomalies: any[] = [];
+    // -----------------------------
+    // STEP 5: FRACTURE DETECTION
+    // -----------------------------
+    let best = { x: 0, y: 0, score: 0 };
 
-    // ---- STEP 4: Cortex-focused scanning ----
-    const margin = Math.floor(width * 0.1);
-
-    for (let y = margin; y < height - margin; y += 2) {
-        for (let x = margin; x < width - margin; x += 2) {
+    for (let y = 10; y < height - 10; y++) {
+        for (let x = 10; x < width - 10; x++) {
 
             const idx = y * width + x;
 
-            // Strong edge but suddenly weak nearby → discontinuity
-            if (edges[idx] > threshold) {
-                const neighbor = edges[idx + 5] || 0;
-                const drop = edges[idx] - neighbor;
+            // 1. Strong edge (bone)
+            if (edges[idx] > strongEdge) {
 
-                if (drop > threshold * 0.8) {
-                    anomalies.push({ x, y, score: drop });
+                // 2. Check continuity break (cortex break)
+                const right = edges[idx + 2];
+                const left = edges[idx - 2];
+                const up = edges[idx - width * 2];
+                const down = edges[idx + width * 2];
+
+                const continuityDrop =
+                    Math.max(
+                        edges[idx] - right,
+                        edges[idx] - left,
+                        edges[idx] - up,
+                        edges[idx] - down
+                    );
+
+                // 3. Detect dark line (radiolucent fracture)
+                const center = smooth[idx];
+                const neighborAvg =
+                    (smooth[idx - 1] +
+                     smooth[idx + 1] +
+                     smooth[idx - width] +
+                     smooth[idx + width]) / 4;
+
+                const darkLine = neighborAvg - center;
+
+                // -----------------------------
+                // FINAL CONDITION (DOCTOR LOGIC)
+                // -----------------------------
+                if (
+                    continuityDrop > strongEdge * 0.9 &&   // cortex break
+                    darkLine > 8                          // lucent line
+                ) {
+                    const score = continuityDrop + darkLine;
+
+                    if (score > best.score) {
+                        best = { x, y, score };
+                    }
                 }
             }
         }
     }
 
-    // ---- STEP 5: Highlight ----
-    if (anomalies.length > 0) {
-        anomalies.sort((a, b) => b.score - a.score);
-        const top = anomalies[0];
+    // -----------------------------
+    // STEP 6: VALIDATE RESULT
+    // -----------------------------
+    if (best.score > strongEdge * 1.2) {
 
         ctx.save();
 
-        ctx.strokeStyle = "black";
-        ctx.lineWidth = 10;
+        // Red accurate marker
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(top.x, top.y, 40, 0, 2 * Math.PI);
-        ctx.stroke();
-
-        ctx.shadowBlur = 25;
-        ctx.shadowColor = "#ff0000";
-        ctx.strokeStyle = "#ff0000";
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.arc(top.x, top.y, 40, 0, 2 * Math.PI);
-        ctx.stroke();
-
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = "white";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(top.x, top.y - 60);
-        ctx.lineTo(top.x, top.y + 60);
-        ctx.moveTo(top.x - 60, top.y);
-        ctx.lineTo(top.x + 60, top.y);
+        ctx.arc(best.x, best.y, 18, 0, 2 * Math.PI);
         ctx.stroke();
 
         ctx.restore();
 
         return {
-            status: "CRITICAL",
-            x: top.x,
-            y: top.y,
-            score: top.score,
-            threshold
+            status: "FRACTURE",
+            x: best.x,
+            y: best.y,
+            score: best.score,
+            threshold: strongEdge
         };
     }
 
-    return { status: "STABLE", threshold };
+    return {
+        status: "NORMAL",
+        threshold: strongEdge
+    };
 };
