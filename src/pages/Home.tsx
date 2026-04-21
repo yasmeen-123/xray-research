@@ -4,7 +4,7 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonButton, IonSpinner, IonBadge
 } from '@ionic/react';
-import { processXraySignal } from '../dspEngine';
+import { processXraySignal, FractureBox } from '../dspEngine';
 
 const MODEL_URL = "https://teachablemachine.withgoogle.com/models/82gnJxwjs/";
 
@@ -43,50 +43,66 @@ export default function Home() {
     ctx.drawImage(img, 0, 0, SIZE, SIZE);
 
     try {
-      // Load ML model
+      // -----------------------------
+      // LOAD MODEL
+      // -----------------------------
       const model = await tmImage.load(
         MODEL_URL + "model.json",
         MODEL_URL + "metadata.json"
       );
 
       const predictions = await model.predict(canvas);
-      predictions.sort((a: any, b: any) => b.probability - a.probability);
 
-      const dsp = processXraySignal(canvas);
-
-      const prob = predictions[0]?.probability ?? 0;
-
-      // ✅ ML decision
-      const isMLFracture =
-        (predictions[0]?.className || "").toLowerCase().includes("fracture") &&
-        prob > 0.75;
-
-      // ✅ FIXED TypeScript-safe DSP condition
-      const isDSPStrong = !!(
-        dsp &&
-        typeof dsp.x === "number" &&
-        typeof dsp.y === "number" &&
-        dsp.score > dsp.threshold * 1.2
+      // -----------------------------
+      // ✅ CORRECT FRACTURE CLASS
+      // -----------------------------
+      const fracturePred = predictions.find((p: any) =>
+        (p.className || "").toLowerCase().includes("fracture")
       );
 
-      // ✅ Final decision (HYBRID)
-      const isFracture = isMLFracture && isDSPStrong;
+      const prob = fracturePred?.probability ?? 0;
 
-      // ✅ DRAW ONLY WHEN TRUE FRACTURE
-      if (isFracture && ctx && dsp && typeof dsp.x === "number" && typeof dsp.y === "number") {
+      // -----------------------------
+      // DSP ANALYSIS
+      // -----------------------------
+      const dsp = processXraySignal(canvas);
+
+      const hasBoxes =
+        dsp &&
+        Array.isArray(dsp.boxes) &&
+        dsp.boxes.length > 0;
+
+      // -----------------------------
+      // FINAL DECISION (HYBRID AI)
+      // -----------------------------
+      const isFracture = !!(prob > 0.7 && hasBoxes);
+
+      // -----------------------------
+      // DRAW BOUNDING BOXES (YOLO STYLE)
+      // -----------------------------
+      if (isFracture && ctx && dsp) {
         ctx.save();
 
-        ctx.strokeStyle = "#ff0000";
-        ctx.lineWidth = 4;
+        dsp.boxes.forEach((box: FractureBox) => {
+          ctx.strokeStyle = "#ff0000";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(box.x, box.y, box.w, box.h);
 
-        ctx.beginPath();
-        ctx.arc(dsp.x, dsp.y, 20, 0, 2 * Math.PI);
-        ctx.stroke();
+          ctx.fillStyle = "#ff0000";
+          ctx.font = "14px Arial";
+          ctx.fillText(
+            `Fracture ${(prob * 100).toFixed(1)}%`,
+            box.x,
+            Math.max(10, box.y - 5)
+          );
+        });
 
         ctx.restore();
       }
 
-      // ✅ REPORT (Doctor-based)
+      // -----------------------------
+      // REPORT GENERATION
+      // -----------------------------
       setReport({
         status: isFracture ? "FRACTURE DETECTED" : "NORMAL",
         confidence: (prob * 100).toFixed(1) + "%",
@@ -98,7 +114,7 @@ export default function Home() {
             : "Cortical continuity preserved",
 
           density: isFracture
-            ? "Radiolucent line (low density region) observed"
+            ? "Radiolucent fracture line detected"
             : "Uniform bone density",
 
           alignment: isFracture
@@ -108,21 +124,21 @@ export default function Home() {
 
         findings: isFracture
           ? [
-              "Cortical break indicating fracture.",
-              "Radiolucent fracture line detected.",
+              "Cortical break detected.",
+              "Radiolucent fracture line present.",
               "Possible hairline or stress fracture.",
-              "Minor structural misalignment observed."
+              "Localized structural disruption observed."
             ]
           : [
-              "Cortical continuity intact.",
+              "No cortical break detected.",
               "No fracture line visible.",
-              "Bone alignment is normal.",
-              "Symmetry preserved."
+              "Bone density uniform.",
+              "Alignment preserved."
             ],
 
         impression: isFracture
-          ? "Findings suggest a possible hairline or stress fracture. Clinical correlation (pain, swelling, tenderness) is recommended."
-          : "No radiographic evidence of fracture or dislocation."
+          ? "Findings suggest a fracture. Clinical correlation recommended (pain, swelling, tenderness)."
+          : "No radiographic evidence of fracture."
       });
 
     } catch (err) {
@@ -138,7 +154,7 @@ export default function Home() {
           alignment: "Unavailable"
         },
         findings: ["Model loading or processing failed."],
-        impression: "Unable to generate diagnostic report."
+        impression: "Unable to analyze X-ray."
       });
     }
 
@@ -156,10 +172,7 @@ export default function Home() {
       </IonHeader>
 
       <IonContent style={{ "--background": "#0b0f1a" }}>
-        <div style={{
-          display: "flex",
-          height: "100vh"
-        }}>
+        <div style={{ display: "flex", height: "100vh" }}>
 
           {/* LEFT PANEL */}
           <div style={{
