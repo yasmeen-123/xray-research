@@ -1,12 +1,10 @@
-export type FractureBox = {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  score: number;
+export type FractureResult = {
+  hasFracture: boolean;
+  confidence: number;
+  message: string;
 };
 
-export const processXraySignal = (canvas: HTMLCanvasElement) => {
+export const processXraySignal = (canvas: HTMLCanvasElement): FractureResult | null => {
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
 
@@ -27,7 +25,7 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
   }
 
   // -----------------------------
-  // STEP 2: SMOOTH (noise reduce)
+  // STEP 2: SMOOTH (reduce noise)
   // -----------------------------
   const smooth: number[] = new Array(width * height).fill(0);
   const kernel = [1,2,1,2,4,2,1,2,1];
@@ -47,7 +45,7 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
   }
 
   // -----------------------------
-  // STEP 3: EDGE DETECTION (SOBEL)
+  // STEP 3: EDGE DETECTION
   // -----------------------------
   const edges: number[] = new Array(width * height).fill(0);
   const gx = [-1,0,1,-2,0,2,-1,0,1];
@@ -71,25 +69,24 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
   }
 
   // -----------------------------
-  // STEP 4: ADAPTIVE THRESHOLD
+  // STEP 4: THRESHOLD
   // -----------------------------
   const avgEdge = edges.reduce((a, b) => a + b, 0) / edges.length;
-
-  const weakThreshold = avgEdge * 1.2;   // LOWERED (important)
-  const strongThreshold = avgEdge * 1.6;
+  const threshold = avgEdge * 1.3;
 
   // -----------------------------
-  // STEP 5: HEATMAP (IMPROVED)
+  // STEP 5: FRACTURE SIGNAL SCORING
   // -----------------------------
-  const heatmap: number[] = new Array(width * height).fill(0);
+  let fractureScore = 0;
+  let strongBreaks = 0;
 
   for (let y = 3; y < height - 3; y++) {
     for (let x = 3; x < width - 3; x++) {
       const i = y * width + x;
 
-      if (edges[i] > weakThreshold) {
+      if (edges[i] > threshold) {
 
-        // continuity break (important for fracture)
+        // Edge discontinuity
         const drop = Math.max(
           edges[i] - edges[i + 1],
           edges[i] - edges[i - 1],
@@ -97,7 +94,7 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
           edges[i] - edges[i - width]
         );
 
-        // dark fracture line
+        // Dark crack detection
         const center = smooth[i];
         const neighborAvg =
           (smooth[i - 1] +
@@ -107,79 +104,44 @@ export const processXraySignal = (canvas: HTMLCanvasElement) => {
 
         const darkLine = neighborAvg - center;
 
-        // 🔥 RELAXED CONDITIONS (CRITICAL FIX)
-        if (drop > weakThreshold * 0.4 || darkLine > 4) {
-          heatmap[i] = drop + darkLine;
+        // Strict fracture condition
+        if (drop > threshold * 0.9 && darkLine > 6) {
+          fractureScore += drop + darkLine;
+          strongBreaks++;
         }
       }
     }
   }
 
   // -----------------------------
-  // STEP 6: CLUSTERING → MULTI BOX
+  // STEP 6: NORMALIZATION
   // -----------------------------
-  const visited = new Set<number>();
-  const boxes: FractureBox[] = [];
+  const normalizedScore = fractureScore / (width * height);
 
-  for (let i = 0; i < heatmap.length; i++) {
-    if (heatmap[i] > weakThreshold && !visited.has(i)) {
+  // -----------------------------
+  // STEP 7: FINAL DECISION
+  // -----------------------------
+  let hasFracture = false;
+  let confidence = 0;
+  let message = "";
 
-      const queue = [i];
-
-      let minX = width, minY = height;
-      let maxX = 0, maxY = 0;
-      let score = 0;
-      let count = 0;
-
-      while (queue.length) {
-        const idx = queue.pop()!;
-        if (visited.has(idx)) continue;
-
-        visited.add(idx);
-
-        const x = idx % width;
-        const y = Math.floor(idx / width);
-
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-
-        score += heatmap[idx];
-        count++;
-
-        const neighbors = [
-          idx + 1, idx - 1,
-          idx + width, idx - width
-        ];
-
-        neighbors.forEach(n => {
-          if (
-            n >= 0 &&
-            n < heatmap.length &&
-            heatmap[n] > weakThreshold &&
-            !visited.has(n)
-          ) {
-            queue.push(n);
-          }
-        });
-      }
-
-      // 🔥 SMALL BOXES ALLOWED (important for hairline fractures)
-      if (count > 8) {
-        boxes.push({
-          x: minX,
-          y: minY,
-          w: maxX - minX,
-          h: maxY - minY,
-          score
-        });
-      }
-    }
+  if (strongBreaks > 50 && normalizedScore > 0.5) {
+    hasFracture = true;
+    confidence = Math.min(1, normalizedScore);
+    message = "Fracture Detected";
+  } else if (strongBreaks < 20) {
+    hasFracture = false;
+    confidence = 0.9;
+    message = "Normal";
+  } else {
+    hasFracture = false;
+    confidence = 0.5;
+    message = "Uncertain — Needs Review";
   }
 
   return {
-    boxes,
-    threshold: weakThreshold
+    hasFracture,
+    confidence,
+    message
   };
 };

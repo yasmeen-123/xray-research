@@ -4,7 +4,6 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonButton, IonSpinner, IonBadge
 } from '@ionic/react';
-import { processXraySignal, FractureBox } from '../dspEngine';
 
 const MODEL_URL = "https://teachablemachine.withgoogle.com/models/82gnJxwjs/";
 
@@ -26,6 +25,54 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // -----------------------------
+  // IMAGE ENHANCEMENT (KEY FIX)
+  // -----------------------------
+  const enhanceImage = (ctx: CanvasRenderingContext2D, size: number) => {
+    const imgData = ctx.getImageData(0, 0, size, size);
+    const data = imgData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+      // Increase contrast
+      let r = data[i];
+      let g = data[i + 1];
+      let b = data[i + 2];
+
+      const factor = 1.2; // contrast
+      const brightness = 15; // brightness
+
+      r = factor * (r - 128) + 128 + brightness;
+      g = factor * (g - 128) + 128 + brightness;
+      b = factor * (b - 128) + 128 + brightness;
+
+      data[i] = Math.min(255, Math.max(0, r));
+      data[i + 1] = Math.min(255, Math.max(0, g));
+      data[i + 2] = Math.min(255, Math.max(0, b));
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+  };
+
+  // -----------------------------
+  // MULTI PASS PREDICTION
+  // -----------------------------
+  const getAveragePrediction = async (model: any, canvas: HTMLCanvasElement) => {
+    let total = 0;
+    const runs = 5;
+
+    for (let i = 0; i < runs; i++) {
+      const preds = await model.predict(canvas);
+
+      const fracture = preds.find((p: any) =>
+        (p.className || "").toLowerCase().includes("fracture")
+      );
+
+      total += fracture?.probability ?? 0;
+    }
+
+    return total / runs;
+  };
+
   const runAdvancedDiagnostic = async (img: HTMLImageElement) => {
     setLoading(true);
 
@@ -42,6 +89,9 @@ export default function Home() {
     ctx.clearRect(0, 0, SIZE, SIZE);
     ctx.drawImage(img, 0, 0, SIZE, SIZE);
 
+    // ✅ Enhance image BEFORE prediction
+    enhanceImage(ctx, SIZE);
+
     try {
       // -----------------------------
       // LOAD MODEL
@@ -51,53 +101,21 @@ export default function Home() {
         MODEL_URL + "metadata.json"
       );
 
-      const predictions = await model.predict(canvas);
+      // -----------------------------
+      // MULTI-PASS PREDICTION
+      // -----------------------------
+      const prob = await getAveragePrediction(model, canvas);
 
       // -----------------------------
-      // ✅ CORRECT FRACTURE CLASS
+      // SMART THRESHOLD
       // -----------------------------
-      const fracturePred = predictions.find((p: any) =>
-        (p.className || "").toLowerCase().includes("fracture")
-      );
+      let isFracture = false;
 
-      const prob = fracturePred?.probability ?? 0;
-
-      // -----------------------------
-      // DSP ANALYSIS
-      // -----------------------------
-      const dsp = processXraySignal(canvas);
-
-      const hasBoxes =
-        dsp &&
-        Array.isArray(dsp.boxes) &&
-        dsp.boxes.length > 0;
-
-      // -----------------------------
-      // FINAL DECISION (HYBRID AI)
-      // -----------------------------
-      const isFracture = !!(prob > 0.7 && hasBoxes);
-
-      // -----------------------------
-      // DRAW BOUNDING BOXES (YOLO STYLE)
-      // -----------------------------
-      if (isFracture && ctx && dsp) {
-        ctx.save();
-
-        dsp.boxes.forEach((box: FractureBox) => {
-          ctx.strokeStyle = "#ff0000";
-          ctx.lineWidth = 3;
-          ctx.strokeRect(box.x, box.y, box.w, box.h);
-
-          ctx.fillStyle = "#ff0000";
-          ctx.font = "14px Arial";
-          ctx.fillText(
-            `Fracture ${(prob * 100).toFixed(1)}%`,
-            box.x,
-            Math.max(10, box.y - 5)
-          );
-        });
-
-        ctx.restore();
+      if (prob > 0.6) {
+        isFracture = true;
+      } else if (prob > 0.45) {
+        // borderline → still flag (important fix)
+        isFracture = true;
       }
 
       // -----------------------------
@@ -110,34 +128,34 @@ export default function Home() {
 
         analysis: {
           edges: isFracture
-            ? "Cortical discontinuity detected"
+            ? "Cortical discontinuity suspected"
             : "Cortical continuity preserved",
 
           density: isFracture
-            ? "Radiolucent fracture line detected"
+            ? "Possible radiolucent line detected"
             : "Uniform bone density",
 
           alignment: isFracture
-            ? "Possible alignment disturbance"
+            ? "Possible misalignment"
             : "Normal anatomical alignment"
         },
 
         findings: isFracture
           ? [
-              "Cortical break detected.",
-              "Radiolucent fracture line present.",
-              "Possible hairline or stress fracture.",
-              "Localized structural disruption observed."
+              "Possible cortical break.",
+              "Suspicious fracture line.",
+              "Potential hairline/stress fracture.",
+              "Requires clinical validation."
             ]
           : [
-              "No cortical break detected.",
-              "No fracture line visible.",
-              "Bone density uniform.",
+              "No fracture detected.",
+              "Bone structure intact.",
+              "Density normal.",
               "Alignment preserved."
             ],
 
         impression: isFracture
-          ? "Findings suggest a fracture. Clinical correlation recommended (pain, swelling, tenderness)."
+          ? "Model suggests fracture. Clinical confirmation recommended."
           : "No radiographic evidence of fracture."
       });
 
@@ -153,7 +171,7 @@ export default function Home() {
           density: "Unavailable",
           alignment: "Unavailable"
         },
-        findings: ["Model loading or processing failed."],
+        findings: ["Model error occurred."],
         impression: "Unable to analyze X-ray."
       });
     }
