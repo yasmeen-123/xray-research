@@ -184,7 +184,7 @@ export default function Home() {
       <IonHeader>
         <IonToolbar style={{ background: "#0b0f1a" }}>
           <IonTitle style={{ color: "#fff" }}>
-            XRAY AI ANALYSIS SYSTEM
+            OrthoAssist AI
           </IonTitle>
         </IonToolbar>
       </IonHeader>
@@ -276,7 +276,7 @@ export default function Home() {
                 </div>
               </>
             ) : (
-              <p>Upload an X-ray to begin analysis.</p>
+              <p>Upload an X-ray to begin analysis</p>
             )}
           </div>
 
